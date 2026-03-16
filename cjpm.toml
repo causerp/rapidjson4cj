@@ -1,0 +1,18 @@
+[package]
+  cjc-version = "1.0.0"
+  name = "rapidjson4cj"
+  description = "rapidjson4cj JSON encoding/decoding library"
+  version = "1.0.0"
+  target-dir = ""
+  src-dir = ""
+  output-type = "dynamic"
+  compile-option = "--dy-std -O2"
+  override-compile-option = ""
+  link-option = ""
+  package-configuration = {}
+
+[dependencies]
+  cenum = { git = "https://github.com/causerp/cenum.git", tag = "v1.1.2"}
+
+[ffi.c]
+  RapidJsonWrapper = { path = "./rapidjson/build/lib" }

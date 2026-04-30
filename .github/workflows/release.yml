@@ -13,16 +13,29 @@ on:
         type: boolean
         default: false
 
-env:
-  CANGJIE_VERSION: 1.0.5
-
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build ${{ matrix.cangjie_version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        cangjie_version: [1.0.5]
+        include:
+          - os: ubuntu-latest
+            os_dir: linux_x86_64_cjnative
+            artifact_suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            os_dir: linux_aarch64_cjnative
+            artifact_suffix: linux-aarch64
+          - os: windows-latest
+            os_dir: windows_x86_64_cjnative
+            artifact_suffix: windows-x64
+          - os: macos-latest
+            os_dir: darwin_aarch64_cjnative
+            artifact_suffix: mac-aarch64
+          - cangjie_version: 1.0.5
+            stdx_version: 1.0.5.1
 
     steps:
       - name: Checkout
@@ -46,34 +59,35 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> $GITHUB_ENV
 
       - name: Setup Cangjie
-        uses: Zxilly/setup-cangjie@v2.1.1
+        uses: Zxilly/setup-cangjie@v2
         with:
           channel: lts
-          version: ${{ env.CANGJIE_VERSION }}
+          version: ${{ matrix.cangjie_version }}
           archive-path: ./cangjie-archive
 
-      - name: Set Output Variables
-        id: vars
+      - name: Download Cangjie stdx (Unix)
+        if: runner.os != 'Windows'
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            echo "OS_DIR=linux_x86_64_cjnative" >> $GITHUB_OUTPUT
-            echo "ARTIFACT_NAME=linux-x64" >> $GITHUB_OUTPUT
-          elif [ "$RUNNER_OS" == "Windows" ]; then
-            echo "OS_DIR=windows_x86_64_cjnative" >> $GITHUB_OUTPUT
-            echo "ARTIFACT_NAME=windows-x64" >> $GITHUB_OUTPUT
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            echo "OS_DIR=darwin_aarch64_cjnative" >> $GITHUB_OUTPUT
-            echo "ARTIFACT_NAME=macos-arm64" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
+          wget "https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v${{ matrix.stdx_version }}/cangjie-stdx-${{ matrix.artifact_suffix }}-${{ matrix.stdx_version }}.zip" -O stdx.zip
+          mkdir -p stdx
+          unzip stdx.zip -d stdx
+          echo "CANGJIE_STDX_PATH=$GITHUB_WORKSPACE/stdx" >> $GITHUB_ENV
+
+      - name: Download Cangjie stdx (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Invoke-WebRequest -Uri "https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v${{ matrix.stdx_version }}/cangjie-stdx-${{ matrix.artifact_suffix }}-${{ matrix.stdx_version }}.zip" -OutFile "stdx.zip"
+          New-Item -ItemType Directory -Path "stdx" -Force
+          Expand-Archive -Path "stdx.zip" -DestinationPath "stdx"
+          echo "CANGJIE_STDX_PATH=$env:GITHUB_WORKSPACE\stdx" >> $env:GITHUB_ENV
 
       - name: Prepare Root Files
         run: |
-          mkdir -p staging/${{ steps.vars.outputs.OS_DIR }}/static/${{ github.event.repository.name }}
-          mkdir -p staging/${{ steps.vars.outputs.OS_DIR }}/dynamic/${{ github.event.repository.name }}
+          mkdir -p staging/${{ matrix.os_dir }}/static/${{ github.event.repository.name }}
+          mkdir -p staging/${{ matrix.os_dir }}/dynamic/${{ github.event.repository.name }}
 
-          if [ -f "README.md" ]; then cp README.md staging/${{ steps.vars.outputs.OS_DIR }}/; fi
-          if [ -f "License.txt" ]; then cp License.txt staging/${{ steps.vars.outputs.OS_DIR }}/; fi
+          if [ -f "README.md" ]; then cp README.md staging/${{ matrix.os_dir }}/; fi
+          if [ -f "License.txt" ]; then cp License.txt staging/${{ matrix.os_dir }}/; fi
         shell: bash
 
       - name: Build Static
@@ -90,7 +104,7 @@ jobs:
 
       - name: Stage Static Artifacts
         run: |
-          DEST_DIR="staging/${{ steps.vars.outputs.OS_DIR }}/static/${{ github.event.repository.name }}"
+          DEST_DIR="staging/${{ matrix.os_dir }}/static/${{ github.event.repository.name }}"
           mkdir -p "$DEST_DIR"
 
           # Copy Cangjie Build Output
@@ -122,7 +136,7 @@ jobs:
 
       - name: Stage Dynamic Artifacts
         run: |
-          DEST_DIR="staging/${{ steps.vars.outputs.OS_DIR }}/dynamic/${{ github.event.repository.name }}"
+          DEST_DIR="staging/${{ matrix.os_dir }}/dynamic/${{ github.event.repository.name }}"
           mkdir -p "$DEST_DIR"
 
           # Copy Cangjie Build Output
@@ -143,8 +157,47 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.vars.outputs.OS_DIR }}
-          path: staging/${{ steps.vars.outputs.OS_DIR }}
+          name: ${{ matrix.os_dir }}-cj${{ matrix.cangjie_version }}
+          path: staging/${{ matrix.os_dir }}
+
+      - name: Build Benchmark
+        run: cjpm build -o benchmark
+        working-directory: benchmark
+        shell: bash
+
+      - name: Stage Benchmark Artifacts
+        run: |
+          mkdir -p benchmark-staging
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            CJC_DIR=$(dirname "$(which cjc.exe)")
+            CJ_ROOT=$(cd "$CJC_DIR/.." && pwd)
+            RUNTIME_DIR="$CJ_ROOT/runtime/lib/windows_x86_64_cjnative"
+            cp benchmark/target/release/bin/benchmark.exe benchmark-staging/
+            cp "$RUNTIME_DIR/libcangjie-runtime.dll" benchmark-staging/
+            cp "$RUNTIME_DIR/libboundscheck.dll" benchmark-staging/
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            if [[ "${{ matrix.cangjie_version }}" == 1.0.* ]]; then
+              CJC_DIR=$(dirname "$(which cjc)")
+              CJ_ROOT=$(cd "$CJC_DIR/.." && pwd)
+              RUNTIME_DIR="$CJ_ROOT/runtime/lib/darwin_aarch64_cjnative"
+              cp benchmark/target/release/bin/benchmark benchmark-staging/
+              cp "$RUNTIME_DIR/libcangjie-runtime.dylib" benchmark-staging/
+              cp "$RUNTIME_DIR/libboundscheck.dylib" benchmark-staging/
+            else
+              cp benchmark/target/release/bin/benchmark benchmark-staging/
+            fi
+          else
+            cp benchmark/target/release/bin/benchmark benchmark-staging/
+          fi
+          cp benchmark/large-file.json benchmark-staging/
+          chmod +x benchmark-staging/benchmark*
+        shell: bash
+
+      - name: Upload Benchmark Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-${{ matrix.os_dir }}-cj${{ matrix.cangjie_version }}
+          path: benchmark-staging
 
   release:
     name: Create Release
@@ -190,25 +243,47 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           CLEAN_VERSION="${VERSION#v}"
+          declare -A ARTIFACT_SUFFIXES=(
+            ["linux_x86_64_cjnative"]="linux-x64"
+            ["linux_aarch64_cjnative"]="linux-aarch64"
+            ["windows_x86_64_cjnative"]="windows-x64"
+            ["darwin_aarch64_cjnative"]="mac-aarch64"
+          )
           for dir in artifacts/*/; do
             FOLDER_NAME=$(basename "$dir")
-            if [ "$FOLDER_NAME" == "linux_x86_64_cjnative" ]; then
-              ARTIFACT_SUFFIX="linux-x64"
-            elif [ "$FOLDER_NAME" == "windows_x86_64_cjnative" ]; then
-              ARTIFACT_SUFFIX="windows-x64"
-            elif [ "$FOLDER_NAME" == "darwin_aarch64_cjnative" ]; then
-              ARTIFACT_SUFFIX="macos-arm64"
-            else
+            if [[ "$FOLDER_NAME" == benchmark-* ]]; then
               continue
             fi
-            ZIP_NAME="${{ github.event.repository.name }}-${ARTIFACT_SUFFIX}-${CLEAN_VERSION}.zip"
-            (cd artifacts && zip -r "../$ZIP_NAME" "$FOLDER_NAME")
+            CJ_VERSION=$(echo "$FOLDER_NAME" | sed -n 's/.*-cj\([0-9.]*\)$/\1/p')
+            BASE_OS_DIR=$(echo "$FOLDER_NAME" | sed 's/-cj[0-9.]*$//')
+            if [ -z "$CJ_VERSION" ] || [ -z "${ARTIFACT_SUFFIXES[$BASE_OS_DIR]}" ]; then
+              echo "Skipping unknown artifact format: $FOLDER_NAME"
+              continue
+            fi
+            ARTIFACT_SUFFIX="${ARTIFACT_SUFFIXES[$BASE_OS_DIR]}"
+            ZIP_NAME="${{ github.event.repository.name }}-${ARTIFACT_SUFFIX}-cj${CJ_VERSION}-${CLEAN_VERSION}.zip"
+            mv "$dir" "$BASE_OS_DIR"
+            zip -r "$ZIP_NAME" "$BASE_OS_DIR"
+            rm -rf "$BASE_OS_DIR"
+          done
+          for dir in artifacts/benchmark-*/; do
+            [ -d "$dir" ] || continue
+            FOLDER_NAME=$(basename "$dir")
+            CJ_VERSION=$(echo "$FOLDER_NAME" | sed -n 's/.*-cj\([0-9.]*\)$/\1/p')
+            TEMP_OS_DIR=$(echo "$FOLDER_NAME" | sed 's/^benchmark-//; s/-cj[0-9.]*$//')
+            ARTIFACT_SUFFIX="${ARTIFACT_SUFFIXES[$TEMP_OS_DIR]}"
+            if [ -z "$CJ_VERSION" ] || [ -z "$ARTIFACT_SUFFIX" ]; then
+              echo "Skipping unknown benchmark format: $FOLDER_NAME"
+              continue
+            fi
+            ZIP_NAME="benchmark-${ARTIFACT_SUFFIX}-cj${CJ_VERSION}-${CLEAN_VERSION}.zip"
+            (cd "$dir" && zip -r "$OLDPWD/$ZIP_NAME" .)
           done
           echo "Generated files:"
           ls -l *.zip
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2.6.1
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -216,8 +291,5 @@ jobs:
           name: ${{ github.event.repository.name }} ${{ steps.version.outputs.VERSION }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           generate_release_notes: true
-          body: |
-            ## Build Info
-            **Cangjie Version**: ${{ env.CANGJIE_VERSION }}
           files: |
             *.zip

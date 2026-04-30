@@ -1,0 +1,35 @@
+[package]
+  cjc-version = "1.1.0"
+  name = "benchmark"
+  description = "benchmark rapidjson against other json decoders"
+  version = "1.0.0"
+  target-dir = ""
+  output-type = "executable"
+  compile-option = "--disable-reflection --static-std -O2"
+  override-compile-option = "--disable-reflection --static-std -O2"
+  link-option = "-s"
+  package-configuration = {}
+
+[dependencies]
+  rapidjson4cj = { path = "../", output-type = "static" }
+
+[target.aarch64-apple-darwin]
+  compile-option = "--static"
+
+[target.aarch64-apple-darwin.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}/darwin_aarch64_cjnative/static/stdx" ]
+
+[target.aarch64-unknown-linux-gnu]
+  compile-option = "--static"
+
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}/linux_aarch64_cjnative/static/stdx" ]
+
+[target.x86_64-unknown-linux-gnu]
+  compile-option = "--static"
+
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}/linux_x86_64_cjnative/static/stdx" ]
+
+[target.x86_64-w64-mingw32.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}/windows_x86_64_cjnative/static/stdx" ]

@@ -6,7 +6,7 @@
   target-dir = ""
   src-dir = ""
   output-type = "static"
-  compile-option = "-O1"
+  compile-option = "-O2"
   override-compile-option = ""
   link-option = ""
   package-configuration = {}

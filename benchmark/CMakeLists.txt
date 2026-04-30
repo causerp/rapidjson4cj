@@ -1,30 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(RapidJson4cjWrapper LANGUAGES CXX)
+project(benchmark LANGUAGES CXX)
 
-add_library(${PROJECT_NAME}
-    src/rj4cj_common.cpp
-    src/rj4cj_document.cpp
-    src/rj4cj_iterator.cpp
-    src/rj4cj_prettywriter.cpp
-    src/rj4cj_value.cpp
-    src/rj4cj_writer.cpp
-)
+set(CMAKE_CXX_STANDARD 17)
 
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_VISIBILITY_PRESET hidden # Hides all C++ symbols by default, requiring explicit marking to export
-    POSITION_INDEPENDENT_CODE ON # Generates position-independent code (PIC) required for building shared libraries (.dll/.so)
-    VISIBILITY_INLINES_HIDDEN ON # Ensures C++ inline functions defined in headers are also hidden by default
-)
+
+add_executable(${PROJECT_NAME} src/main.cpp)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ../rapidjson/src)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(${PROJECT_NAME} PRIVATE
-        -fno-exceptions # Disables C++ exception handling to reduce binary size and overhead
-        -fno-rtti       # Disables Run-Time Type Information to reduce binary size and overhead
-    )
-    target_link_options(${PROJECT_NAME} PRIVATE
-        -nostdlib++ # Prevents linking the C++ standard library (e.g., libstdc++)
-    )
-
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall                   # Enables standard compiler warnings for code quality
         -Wdate-time             # Warns if macros like __DATE__ are used, prevents non-reproducible builds
@@ -39,6 +23,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if (MINGW)
         target_compile_options(${PROJECT_NAME} PRIVATE
             -m64          # Forces 64-bit x86_64 target, overrides defaults for cross-compile safety
+            -msse4.2      # Enables SSE4.2 instructions
             -Wa,-mbig-obj # Required for large object files on Windows
         )
         target_link_options(${PROJECT_NAME} PRIVATE
@@ -53,11 +38,33 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_link_options(${PROJECT_NAME} PRIVATE -B${CMAKE_BINARY_DIR}/toolchain/ -fuse-ld=lld)
         endif()
     elseif(NOT APPLE)
-        if(CMAKE_BUILD_TYPE MATCHES "Release")
-            target_compile_options(${PROJECT_NAME} PRIVATE
-                -D_FORTIFY_SOURCE=2 # Replaces libc calls with secure, faster bounds-checking variants
-                -O2                 # Standard optimizations
-            )
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            if(CMAKE_BUILD_TYPE MATCHES "Release")
+                target_compile_options(${PROJECT_NAME} PRIVATE
+                    -D_FORTIFY_SOURCE=2 # Replaces libc calls with secure, faster bounds-checking variants
+                    -O2                 # Standard optimizations
+                    -msse4.2            # Enables SSE4.2 (fixes RapidJSON __builtin_ia32_pcmpistri128)
+                    -march=x86-64-v2    # Sets baseline to SSE4.2 + POPCNT
+                )
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "armv7|armv7l")
+            if(CMAKE_BUILD_TYPE MATCHES "Release")
+                target_compile_options(${PROJECT_NAME} PRIVATE
+                    -D_FORTIFY_SOURCE=2
+                    -O2
+                    -march=armv7-a
+                    -mfpu=neon          # Explicitly enable NEON for 32-bit ARM
+                    -mfloat-abi=hard    # Use hardware floating point (standard for modern armv7)
+                )
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+            if(CMAKE_BUILD_TYPE MATCHES "Release")
+                target_compile_options(${PROJECT_NAME} PRIVATE
+                    -D_FORTIFY_SOURCE=2
+                    -O2
+                    -march=armv8-a      # Baseline ARMv8
+                )
+            endif()
         endif()
 
         target_link_options(${PROJECT_NAME} PRIVATE
@@ -67,17 +74,8 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         )
     endif()
 
-    if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        target_compile_definitions(${PROJECT_NAME} PRIVATE RAPIDJSON_SSE42)
-        target_compile_options(${PROJECT_NAME} PRIVATE -msse4.2)
-    elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "armv7|armv7l")
-        target_compile_definitions(${PROJECT_NAME} PRIVATE RAPIDJSON_NEON)
-        target_compile_options(${PROJECT_NAME} PRIVATE -mfpu=neon)
-    endif ()
 elseif (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE
-        /EHsc- # Disables C++ exceptions
         /O2    # Maximizes speed
     )
-    target_compile_definitions(${PROJECT_NAME} PRIVATE _HAS_EXCEPTIONS=0)
 endif()

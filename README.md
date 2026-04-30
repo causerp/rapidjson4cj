@@ -77,7 +77,7 @@ This example demonstrates how to parse a JSON string into a document, access var
 value types including nested objects and arrays.
 
 ```cangjie
-import rapidjson4cj.Document
+import rapidjson4cj.JsonValue
 
 main() {
     let json = #"
@@ -92,7 +92,7 @@ main() {
     }
     "#
 
-    try(doc = Document(json)) {
+    try(doc = JsonValue(json)) {
         // 1. Check root type
         if (doc.isObject()) {
             println("Document is a valid JSON Object.")
